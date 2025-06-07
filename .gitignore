@@ -1,0 +1,16 @@
+# PHP
+*.log
+composer.phar
+/vendor/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+/logs/
+ext4.vhdx
