@@ -18,10 +18,12 @@ if (isset($options['help'])) {
 }
 
 if (isset($options['create_table'])) {
-   echo "Create table function called\n";
-   echo "Host: " . ($options['h'] ?? 'localhost') . "\n";
-   echo "User: " . ($options['u'] ?? 'not provided') . "\n";
-   echo "Password: " . (isset($options['p']) ? '[provided]' : '[not provided]') . "\n";
+   echo "Creating users table...\n";
+   $pdo = connectToDatabase($options);
+   if ($pdo) {
+       echo "Database connection successful.\n";
+       createUsersTable($pdo);
+   }
    exit(0);
 }
 
@@ -48,6 +50,74 @@ function parseCommandLineArgs($argc, $argv) {
     ];
     
     return getopt($shortOpts, $longOpts);
+}
+
+function createUsersTable($pdo) {
+    try {
+        // Drop table if it exists (rebuild as per requirements)
+        $dropSql = "DROP TABLE IF EXISTS users";
+        $pdo->exec($dropSql);
+        echo "Existing users table dropped (if it existed).\n";
+        
+        // Create users table with required fields
+        $createSql = "
+            CREATE TABLE users (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                surname VARCHAR(255) NOT NULL,
+                email VARCHAR(255) NOT NULL UNIQUE
+            )
+        ";
+        
+        $pdo->exec($createSql);
+        echo "Users table created successfully!\n";
+        echo "Table structure:\n";
+        echo "  - id (SERIAL PRIMARY KEY)\n";
+        echo "  - name (VARCHAR, NOT NULL)\n";
+        echo "  - surname (VARCHAR, NOT NULL)\n";
+        echo "  - email (VARCHAR, NOT NULL, UNIQUE)\n";
+        
+    } catch (PDOException $e) {
+        echo "Error creating users table: " . $e->getMessage() . "\n";
+        exit(1);
+    }
+}
+
+function connectToDatabase($options) {
+    $host = $options['h'] ?? 'localhost';
+    $username = $options['u'] ?? null;
+    $password = $options['p'] ?? null;
+    $database = 'postgres'; // Default database for PostgreSQL
+    
+    // Validate required credentials
+    if (!$username) {
+        echo "Error: PostgreSQL username is required (-u flag)\n";
+        return null;
+    }
+    
+    if (!isset($options['p'])) {
+        echo "Error: PostgreSQL password is required (-p flag)\n";
+        return null;
+    }
+    
+    try {
+        $dsn = "pgsql:host=$host;dbname=$database";
+        $pdo = new PDO($dsn, $username, $password, [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        ]);
+        
+        echo "Connected to PostgreSQL at $host as $username\n";
+        return $pdo;
+        
+    } catch (PDOException $e) {
+        echo "Database connection failed: " . $e->getMessage() . "\n";
+        echo "Please check your connection parameters:\n";
+        echo "  Host: $host\n";
+        echo "  Username: $username\n";
+        echo "  Database: $database\n";
+        return null;
+    }
 }
 
 function showHelp() {
