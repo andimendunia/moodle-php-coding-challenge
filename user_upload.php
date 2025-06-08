@@ -176,8 +176,8 @@ function cleanUserData($name, $surname, $email) {
     $surname = preg_replace('/[^a-zA-Z\'\s-]/', '', $surname);
     
     // Capitalize names properly
-    $name = ucwords(strtolower(trim($name)));
-    $surname = ucwords(strtolower(trim($surname)));
+    $name = properNameCapitalization(trim($name));
+    $surname = properNameCapitalization(trim($surname));
     
     // Clean and validate email
     $email = strtolower(trim($email));
@@ -191,6 +191,23 @@ function cleanUserData($name, $surname, $email) {
         'surname' => $surname,
         'email' => $email
     ];
+}
+
+function properNameCapitalization($name) {
+    // Convert to lowercase first
+    $name = strtolower($name);
+    
+    // Capitalize first letter and letters after apostrophes and hyphens
+    $name = preg_replace_callback('/\b\w/', function($matches) {
+        return strtoupper($matches[0]);
+    }, $name);
+    
+    // Handle specific cases: capitalize after apostrophes and hyphens
+    $name = preg_replace_callback('/[\'\-]\w/', function($matches) {
+        return $matches[0][0] . strtoupper($matches[0][1]);
+    }, $name);
+    
+    return $name;
 }
 
 function insertUser($pdo, $userData) {
