@@ -28,11 +28,24 @@ if (isset($options['create_table'])) {
 }
 
 if (isset($options['file'])) {
-    echo "CSV processing function called\n";
-    echo "File: " . $options['file'] . "\n";
-    echo "Dry run: " . (isset($options['dry_run']) ? 'yes' : 'no') . "\n";
-    echo "Host: " . ($options['h'] ?? 'localhost') . "\n";
-    echo "User: " . ($options['u'] ?? 'not provided') . "\n";
+    echo "Processing CSV file: " . $options['file'] . "\n";
+    
+    $isDryRun = isset($options['dry_run']);
+    if ($isDryRun) {
+        echo "DRY RUN MODE: No data will be inserted into database\n";
+    }
+    
+    // Connect to database (even for dry run to validate connection)
+    $pdo = null;
+    if (!$isDryRun) {
+        $pdo = connectToDatabase($options);
+        if (!$pdo) {
+            exit(1);
+        }
+    }
+    
+    // Process the CSV file
+    processCsvFile($options['file'], $pdo, $isDryRun);
     exit(0);
 }
 
@@ -50,6 +63,157 @@ function parseCommandLineArgs($argc, $argv) {
     ];
     
     return getopt($shortOpts, $longOpts);
+}
+
+function processCsvFile($filename, $pdo, $isDryRun) {
+    // Check if file exists
+    if (!file_exists($filename)) {
+        echo "Error: CSV file '$filename' not found.\n";
+        return;
+    }
+    
+    // Check if file is readable
+    if (!is_readable($filename)) {
+        echo "Error: CSV file '$filename' is not readable.\n";
+        return;
+    }
+    
+    $handle = fopen($filename, 'r');
+    if (!$handle) {
+        echo "Error: Could not open CSV file '$filename'.\n";
+        return;
+    }
+    
+    $lineNumber = 0;
+    $processedCount = 0;
+    $errorCount = 0;
+    $skippedCount = 0;
+    
+    echo "\nProcessing CSV file...\n";
+    echo str_repeat("-", 50) . "\n";
+    
+    while (($row = fgetcsv($handle)) !== false) {
+        $lineNumber++;
+        
+        // Skip header row
+        if ($lineNumber === 1) {
+            // Validate header format
+            if (count($row) < 3 || 
+                strtolower(trim($row[0])) !== 'name' || 
+                strtolower(trim($row[1])) !== 'surname' || 
+                strtolower(trim($row[2])) !== 'email') {
+                echo "Warning: CSV header format may be incorrect.\n";
+                echo "Expected: name,surname,email\n";
+                echo "Found: " . implode(',', array_map('trim', $row)) . "\n";
+            }
+            continue;
+        }
+        
+        // Check if row has enough columns
+        if (count($row) < 3) {
+            echo "Error on line $lineNumber: Row has insufficient columns. Skipping.\n";
+            $skippedCount++;
+            continue;
+        }
+        
+        // Extract and clean data
+        $name = trim($row[0]);
+        $surname = trim($row[1]);
+        $email = trim($row[2]);
+        
+        // Skip empty rows
+        if (empty($name) && empty($surname) && empty($email)) {
+            $skippedCount++;
+            continue;
+        }
+        
+        // Validate required fields
+        if (empty($name) || empty($surname) || empty($email)) {
+            echo "Error on line $lineNumber: Missing required field(s). ";
+            echo "Name: '$name', Surname: '$surname', Email: '$email'. Skipping.\n";
+            $errorCount++;
+            continue;
+        }
+        
+        // Clean and validate data
+        $cleanedData = cleanUserData($name, $surname, $email);
+        if (!$cleanedData) {
+            echo "Error on line $lineNumber: Invalid email format '$email'. Skipping.\n";
+            $errorCount++;
+            continue;
+        }
+        
+        // Insert into database or show what would be inserted
+        if ($isDryRun) {
+            echo "Would insert: {$cleanedData['name']} {$cleanedData['surname']} ({$cleanedData['email']})\n";
+        } else {
+            if (insertUser($pdo, $cleanedData)) {
+                echo "Inserted: {$cleanedData['name']} {$cleanedData['surname']} ({$cleanedData['email']})\n";
+            } else {
+                echo "Error on line $lineNumber: Failed to insert user. Possible duplicate email.\n";
+                $errorCount++;
+                continue;
+            }
+        }
+        
+        $processedCount++;
+    }
+    
+    fclose($handle);
+    
+    // Summary
+    echo str_repeat("-", 50) . "\n";
+    echo "Processing complete!\n";
+    echo "Lines processed: " . ($lineNumber - 1) . "\n";
+    echo "Successfully " . ($isDryRun ? "would process" : "processed") . ": $processedCount\n";
+    echo "Errors: $errorCount\n";
+    echo "Skipped: $skippedCount\n";
+}
+
+function cleanUserData($name, $surname, $email) {
+    // Remove special characters from name and surname (keeping apostrophes for O'Connor, etc.)
+    $name = preg_replace('/[^a-zA-Z\'\s-]/', '', $name);
+    $surname = preg_replace('/[^a-zA-Z\'\s-]/', '', $surname);
+    
+    // Capitalize names properly
+    $name = ucwords(strtolower(trim($name)));
+    $surname = ucwords(strtolower(trim($surname)));
+    
+    // Clean and validate email
+    $email = strtolower(trim($email));
+    
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        return false;
+    }
+    
+    return [
+        'name' => $name,
+        'surname' => $surname,
+        'email' => $email
+    ];
+}
+
+function insertUser($pdo, $userData) {
+    try {
+        $sql = "INSERT INTO users (name, surname, email) VALUES (:name, :surname, :email)";
+        $stmt = $pdo->prepare($sql);
+        
+        return $stmt->execute([
+            ':name' => $userData['name'],
+            ':surname' => $userData['surname'],
+            ':email' => $userData['email']
+        ]);
+        
+    } catch (PDOException $e) {
+        // Check if it's a unique constraint violation
+        if (strpos($e->getMessage(), 'duplicate key') !== false || 
+            strpos($e->getMessage(), 'unique constraint') !== false) {
+            return false; // Duplicate email
+        }
+        
+        echo "Database error: " . $e->getMessage() . "\n";
+        return false;
+    }
 }
 
 function createUsersTable($pdo) {
